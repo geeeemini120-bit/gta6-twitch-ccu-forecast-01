@@ -12,8 +12,13 @@ at 00:00 UTC, or the category was barely tracked) explode 10-1000x later in
 the day, while launches with a huge hour-1 print (most markets already
 unlocked) dip through the morning and recover to roughly hour-1 level by the
 evening. So each comparable is weighted by how close its log hour-1 print is
-to this case's log hour-1 print, with a Gaussian kernel of bandwidth 1.0 in
-log space, and the five scored quantiles of each hour's log-ratio are the
+to this case's log hour-1 print, with a Gaussian kernel whose bandwidth
+narrows from 1.3 in the early hours to 0.7 by the evening (in log space):
+early in the day the shape varies wildly across launches because regional
+unlocks land at different times, so a wide kernel averages over more
+launches, while by the evening every market is unlocked and the shape has
+converged, so a narrow kernel leans on the closest-in-scale launches. The
+five scored quantiles of each hour's log-ratio are the
 weighted quantiles of the comparables at that hour. The quantile series are
 then lightly smoothed across neighbouring hours (triangular kernel, radius 1)
 and exponentiated back against this case's hour-1 print.
@@ -29,7 +34,7 @@ morning dip to ~0.5x hour 1, recovery to ~0.9-1.3x by hours 18-21.
 
 Validation (leave-one-out over the 37 released comparables in the kit,
 each scored as its own pseudo-case with its hour-1 print as the only
-input): mean pinball loss 0.403 on all 37 and 0.207 on the 20 launches with
+input): mean pinball loss 0.397 on all 37 and 0.205 on the 20 launches with
 hour-1 prints >= 50k (the scale GTA VI will be at), vs the house baseline's
 0.930 / 0.251 on the same sets; 90% coverage 0.92 on the big launches
 (target 0.90). The kit's starter (house baseline) scores ~0.387 on the
@@ -63,7 +68,14 @@ LEVELS = [0.05, 0.25, 0.5, 0.75, 0.95]
 
 # Gaussian kernel bandwidth (in natural-log units) for weighting comparables
 # by the closeness of their hour-1 print to this case's hour-1 print.
-BANDWIDTH = 1.0
+# The bandwidth narrows across the day: in the early hours the day shape
+# varies wildly across launches (regional unlocks land at different times),
+# so a wide kernel averages over more launches; by the evening every market
+# is unlocked and the shape has converged, so a narrow kernel leans on the
+# closest-in-scale launches. Linear ramp from 1.3 at hour 2 to 0.7 at hour 24.
+def bandwidth(hour_index):
+    """Kernel bandwidth for hour index 0..22 (hours 2..24)."""
+    return 1.3 - 0.6 * hour_index / 22.0
 # Triangular smoothing radius (in hours) applied to each quantile series.
 SMOOTH_RADIUS = 1
 # Fall back to the house baseline when fewer usable comparables than this.
@@ -149,11 +161,12 @@ def comparable_curves(case):
 def hour_quantiles(p1, curves):
     """Five quantiles per hour (hours 2..24) as viewer counts."""
     log_p1 = math.log(p1)
-    weights = [math.exp(-0.5 * ((log_h1 - log_p1) / BANDWIDTH) ** 2)
-               for log_h1, _ in curves]
-    # Weighted quantiles of the log-ratios, hour by hour.
+    # Weighted quantiles of the log-ratios, hour by hour; the kernel
+    # bandwidth narrows across the day (see bandwidth()).
     log_q = []
     for h in range(23):
+        weights = [math.exp(-0.5 * ((log_h1 - log_p1) / bandwidth(h)) ** 2)
+                   for log_h1, _ in curves]
         pairs = [(ratios[h], w) for (_, ratios), w in zip(curves, weights)
                  if ratios[h] is not None]
         log_q.append([weighted_quantile(pairs, tau) for tau in LEVELS])
